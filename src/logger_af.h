@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <iostream>
 #include <mutex>
+#include <utility>
 #include <string_view>
 
 // switch this to <format> once implemented by g++
@@ -14,7 +15,8 @@
 
 
 namespace Logger_AF {
-    enum class Level : std::uint8_t {
+    enum class Level : std::int8_t {
+        NONE = -1, // Used to indicate when no error levels are requested.  Shouldn't ever be used as an actual output level.
         FATAL,
         ERROR,
         WARN,
@@ -42,7 +44,7 @@ namespace Logger_AF {
             }
         }
 
-        enum class Stream_Type : std::uint8_t {
+        enum class Stream_Type : std::int8_t {
             COUT,
             CERR
         };
@@ -60,25 +62,56 @@ namespace Logger_AF {
             }
         }
 
-        constexpr auto &get_ostream(Stream_Type st) {
-            switch (st) {
-                case (Stream_Type::CERR):
-                    return stderr;
-                case (Stream_Type::COUT):
-                    return stdout;
+
+        constexpr bool flush_from_level(Level l) {
+            switch (l) {
+                case Level::FATAL:
+                case Level::ERROR:
+                    return true;
+                case Level::WARN:
+                case Level::INFO:
+                case Level::DEBUG:
+                case Level::TRACE:
+                    return false;
             }
         }
     }
 
     class Logger {
+
         static std::atomic<Level> m_level;
         static std::mutex m_mutex;
 
+        template<bool FLUSH>
+        static void inline output_line(std::ostream &stream, std::string_view str) {
+            stream << str << '\n';
+            if (FLUSH) {
+                stream << std::flush;
+            }
+        }
+
+        template<Level LEVEL>
+        static void output_line(std::string_view str) {
+            switch (details::level_to_stream_type(LEVEL)) {
+                case (details::Stream_Type::COUT):
+                    output_line<details::flush_from_level(LEVEL)>(std::cout, str);
+                    break;
+                case (details::Stream_Type::CERR):
+                    output_line<details::flush_from_level(LEVEL)>(std::cerr, str);
+                    break;
+            }
+        }
+
+
     public:
+
         static void set_level(Level new_level) { m_level = new_level; }
 
         template<Level LEVEL = Level::INFO, typename... ARGS>
         static void put(std::string_view str, ARGS... args) {
+            if (LEVEL == Level::NONE){
+                return; // attempt to compile-time optimize away this function for NONE case
+            }
             if (LEVEL <= m_level) {
                 std::time_t t = std::time(nullptr);
 
@@ -86,23 +119,17 @@ namespace Logger_AF {
                                        fmt::localtime(t), fmt::localtime(t));
                 auto content = fmt::format(str, args...);
 
-                auto &stream = details::get_ostream(details::level_to_stream_type(LEVEL));
                 auto output = fmt::format("{}| {}", tag, content);
 
-                std::scoped_lock printing_lock(m_mutex);
-                switch (details::level_to_stream_type(LEVEL)) {
-                    case (details::Stream_Type::COUT):
-                        std::cout << output << "\n";
-                        break;
-                    case (details::Stream_Type::CERR):
-                        std::cerr << output << std::endl;
-                        break;
+                {
+                    std::scoped_lock printing_lock(m_mutex);
+                    output_line<LEVEL>(output);
                 }
             }
         }
     };
 
-
+    // needed to instantiate because static singleton
     std::atomic<Level> Logger::m_level = Level::TRACE; // default show every Level
     std::mutex Logger::m_mutex = {};
 }

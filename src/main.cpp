@@ -37,6 +37,9 @@ many_outputs(std::size_t thread_num, std::size_t max_iterations, double sleep_ti
 
 
 int main() {
+    Logger_AF::Logger::set_level(Logger_AF::Level::WARN);
+
+
     decltype(std::thread::hardware_concurrency()) min_threads = 2;
     const auto processor_count = (std::max(std::thread::hardware_concurrency(),
                                            min_threads) - 1);
